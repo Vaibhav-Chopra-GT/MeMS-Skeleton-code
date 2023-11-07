@@ -51,9 +51,130 @@ int mainchainlength =0;
 int subchainlengtharray[100000];
 
 
+void addnewfreelistnode(freelistnode *nodetobeadded){
+    if(head == NULL){
+        nodetobeadded->prev = NULL;
+        nodetobeadded->next = NULL;
+        head = nodetobeadded;
+        tail = head;
+    }else{
+        nodetobeadded->prev = tail;
+        nodetobeadded->next = NULL;
+
+        if (tail != NULL) {
+            tail->next = nodetobeadded;
+        }
+
+        tail = nodetobeadded;
+
+       
+        /*
+        freelistnode *itnode = head;
+        while (itnode->next != NULL) {
+            itnode = itnode->next;
+        }
+        itnode->next = nodetobeadded;
+        nodetobeadded->prev = itnode;
+        */
+    }
+
+}
+
+void* addNewChain(size_t size){
+        int a = size/PAGE_SIZE;
+        int offset = size - PAGE_SIZE*(a);
+        a = a+1;
+        int mmapsize = a*PAGE_SIZE;
+        void *start;
+        start = mmap(NULL, mmapsize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        if (start == MAP_FAILED) {
+            perror("mmap failed");
+            return NULL;
+        }
+        // mapping = start;
+        // printf("%d %d %ld\n", offset, a, start);
+        
+        freelistnode* newnode = mmap(NULL, sizeof(freelistnode), PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        if (newnode == MAP_FAILED) {
+            perror("mmap failed");
+            return NULL;
+        }
+        int holespace = a*PAGE_SIZE - size;
+        seglistnode* newsegnode = mmap(NULL, sizeof(seglistnode), PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        if (newnode == MAP_FAILED) {
+            perror("mmap failed");
+            return NULL;
+        }
+        newsegnode->Holebool = 0;
+        newsegnode->start = va;
+        // va = va + size;
+        newsegnode->size = size;
+        seglistnode *seglsthead = newsegnode;
+
+        seglistnode* newsegnode1 = mmap(NULL, sizeof(seglistnode), PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        if (newnode == MAP_FAILED) {
+            perror("mmap failed");
+            return NULL;
+        }
+        newsegnode1->Holebool = 1;
+        newsegnode1->start = newsegnode->start + newsegnode->size;
+        // va = va+holespace;
+        newsegnode1->size = holespace;
+        newsegnode1->prev = seglsthead;
+        newsegnode1->next = NULL;
+
+        
+        seglsthead->prev = NULL;
+        // seglsthead->next = NULL;
+
+        seglsthead->next = newsegnode1;
+
+        newnode->seghead = seglsthead;
+        newnode->pages = a;
+        newnode->pconverter = start;
+        newnode->next = NULL;
+
+        // printf("%d\n%d\n",newnode->seghead->Holebool, newnode->seghead->next->Holebool);
+        addnewfreelistnode(newnode);
+        // traverse();
+        void* returnvalue = newsegnode->start;
+        return returnvalue;
+}
 
 // long mapping;
+void traverse() {
+    freelistnode *current = head;
+    int i = 0;
+    mainchainlength = 0;
+    pagesused = 0;
+    spaceunused = 0;
+    // Traverse forward
+    /*printf("All traversal:\n");*/
+    while (current != NULL) {
+        int j = 0;
+        pagesused += current->pages;
+        mainchainlength+=1;
+        printf("MAIN[%d:%d]-> ",current->seghead->start,(current->seghead->start + (current->pages)*PAGE_SIZE - 1));
+        seglistnode *currentseg = current->seghead;
+        while(currentseg != NULL) {
+            if(currentseg->Holebool == 0){
+                printf("P[%d:%d] <-> ", currentseg->start,(currentseg->start+ currentseg->size - 1));
+                currentseg = currentseg->next;
+            }else if (currentseg->Holebool == 1)
+            {
+                spaceunused += currentseg->size;
+                printf("H[%d:%d] <-> ", currentseg->start,(currentseg->start+ currentseg->size - 1));
+                currentseg = currentseg->next;
+            }
+            j++;
+        }
+        printf("NULL\n");
+        subchainlengtharray[i] = j;
+        i+=1;
+        current = current->next;
+    }
 
+}
 
 
 
@@ -80,7 +201,38 @@ Input Parameter: Nothing
 Returns: Nothing
 */
 void mems_finish(){
+    freelistnode *current = head;
+    freelistnode *temp;
     
+    while (current != NULL) {
+        void *ptrdeladdr = current->pconverter;
+        int length = PAGE_SIZE*current->pages;
+
+        if (munmap(ptrdeladdr, length) == -1) {
+            perror("munmap");
+            exit(EXIT_FAILURE);
+        }
+
+        
+        seglistnode *currentseg = current->seghead;
+        seglistnode *ctseg;
+        while(currentseg != NULL){
+            ctseg = currentseg->next;
+            if (munmap(currentseg, sizeof(seglistnode)) == -1) {
+                perror("munmap");
+                exit(EXIT_FAILURE);
+            }
+            currentseg = ctseg;
+        }
+        temp = current->next;
+
+        if (munmap(current, sizeof(freelistnode)) == -1) {
+                perror("munmap");
+                exit(EXIT_FAILURE);
+        }
+
+        current = temp;
+    }
 }
 
 
@@ -177,7 +329,15 @@ Parameter: Nothing
 Returns: Nothing but should print the necessary information on STDOUT
 */
 void mems_print_stats(){
-    
+    printf("\n----- MeMS SYSTEM STATS -----\n");
+    traverse();
+    printf("Pages Used:     %d\n", pagesused);
+    printf("Space unused:   %d\n", spaceunused);
+    printf("Main chain length: %d\nSub-chain length array: [", mainchainlength);
+    for(int i = 0;i<mainchainlength;i++){
+        printf("%d, ",subchainlengtharray[i]);
+    }
+    printf("]");
 }
 
 
@@ -187,7 +347,20 @@ Parameter: MeMS Virtual address (that is created by MeMS)
 Returns: MeMS physical address mapped to the passed ptr (MeMS virtual address).
 */
 void *mems_get(void*v_ptr){
-    
+    long int virtual_address = (long)v_ptr;
+    freelistnode *current = head;
+    freelistnode *mainnode;
+    while (current != NULL) {
+        if(virtual_address >= current->seghead->start && virtual_address < (current->seghead->start+(current->pages)*PAGE_SIZE)){
+            mainnode = current;
+            break;
+        }else{
+            current = current->next;
+        }
+        }
+    void *p_ptr;
+    p_ptr = v_ptr+ (long)(mainnode->pconverter);
+    return p_ptr;
 }
 
 
